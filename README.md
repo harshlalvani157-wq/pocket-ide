@@ -471,3 +471,5 @@ This project is licensed under the [MIT License](LICENSE). Third-party runtime b
 
 
 9) updates readme
+
+10) to add auto draft for chat with ai
