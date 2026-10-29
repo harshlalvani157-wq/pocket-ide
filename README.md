@@ -473,3 +473,5 @@ This project is licensed under the [MIT License](LICENSE). Third-party runtime b
 9) updates readme
 
 10) to add auto draft for chat with ai
+
+11) when I try to upload the file from local storage it has got the 100mb limit increase it 
