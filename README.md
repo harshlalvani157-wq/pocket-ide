@@ -479,3 +479,5 @@ This project is licensed under the [MIT License](LICENSE). Third-party runtime b
 12) backup the current project with ai chats and project code and tools installed in the devloper tools like java kotlin is installed or that info so when ectractung it app know if something is missing just instaall it and extract the code if project so completely project backup idea 
 
 13 ) extract zip in app 
+
+14) improve ui and ux
