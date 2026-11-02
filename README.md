@@ -483,3 +483,7 @@ This project is licensed under the [MIT License](LICENSE). Third-party runtime b
 14) improve ui and ux
 
 15) also improve the terminal section like this screenshot:
+
+<p align="center">
+  <img src="assets/readme/Screenshot_2026-11-02-06-12-47-80_4fc507009b99b856c1392bdee7510a12.jpg" alt="Screenshot" width="700">
+</p>
