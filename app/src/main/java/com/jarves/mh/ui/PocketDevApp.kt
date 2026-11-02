@@ -178,6 +178,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -4780,6 +4781,7 @@ private fun WorkspaceScreen(
                     onKeepFileChange,
                 )
                 WorkspaceTab.EDITOR -> CodeServerTab(
+                    projectKey = state.activeProject?.id.orEmpty(),
                     installed = state.codeServerInstalled,
                     installing = state.codeServerInstalling,
                     starting = state.codeServerStarting,
@@ -7330,6 +7332,7 @@ private fun PreviewTab(ready: Boolean, url: String?) {
 
 @Composable
 private fun CodeServerTab(
+    projectKey: String,
     installed: Boolean,
     installing: Boolean,
     starting: Boolean,
@@ -7340,6 +7343,7 @@ private fun CodeServerTab(
     onStart: () -> Unit,
     onStop: () -> Unit,
 ) {
+    key(projectKey) {
     val context = LocalContext.current
     var webView by remember { mutableStateOf<WebView?>(null) }
     var loading by remember { mutableStateOf(false) }
@@ -7666,6 +7670,7 @@ private fun CodeServerTab(
                 )
             }
         }
+    }
     }
 }
 

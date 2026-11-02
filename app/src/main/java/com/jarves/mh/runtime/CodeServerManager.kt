@@ -5,6 +5,7 @@ import android.util.Log
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -18,6 +19,7 @@ class CodeServerManager(
     private val installer: RuntimeInstaller,
 ) {
     @Volatile private var process: Process? = null
+    @Volatile var runningProjectId: String? = null; private set
     @Volatile var runningProjectSlug: String? = null; private set
     @Volatile var port: Int = DEFAULT_PORT; private set
 
@@ -50,11 +52,16 @@ class CodeServerManager(
             return@withContext Result.failure(IllegalStateException("Code Server is not installed yet"))
         }
 
-        if (isRunning && runningProjectSlug == projectSlug && isServerResponding(targetPort)) {
+        if (isRunning && runningProjectId == projectId && runningProjectSlug == projectSlug && isServerResponding(targetPort)) {
             return@withContext Result.success(url)
         }
 
+        val previous = process
         stop()
+        if (previous != null && previous.isAlive) {
+            previous.waitFor(1500, TimeUnit.MILLISECONDS)
+            if (previous.isAlive) previous.destroyForcibly()
+        }
 
         val runtime = runCatching { installer.installedRuntime() }.getOrElse {
             return@withContext Result.failure(it)
@@ -76,6 +83,7 @@ class CodeServerManager(
         val executable = resolveCodeServerExecutable(runtime.rootfs)
 
         port = targetPort
+        runningProjectId = projectId
         runningProjectSlug = projectSlug
 
         val guestCommand = listOf(
@@ -139,6 +147,7 @@ class CodeServerManager(
     fun stop() {
         process?.destroy()
         process = null
+        runningProjectId = null
         runningProjectSlug = null
     }
 
