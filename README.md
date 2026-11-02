@@ -487,3 +487,5 @@ This project is licensed under the [MIT License](LICENSE). Third-party runtime b
 <p align="center">
   <img src="assets/readme/Screenshot_2026-11-02-06-12-47-80_4fc507009b99b856c1392bdee7510a12.jpg" alt="Screenshot" width="700">
 </p>
+
+but I want the terminal like the stomach only with the extra keys laying down at bottom and we can out and this terminal is not full screen that is the limitation what I think I want the full screen 
