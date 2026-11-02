@@ -481,3 +481,5 @@ This project is licensed under the [MIT License](LICENSE). Third-party runtime b
 13 ) extract zip in app 
 
 14) improve ui and ux
+
+15) also improve the terminal section like this screenshot:
