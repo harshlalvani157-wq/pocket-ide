@@ -80,6 +80,8 @@ class CodeServerManager(
             }
         }
         val guestWorkspacePath = "/workspace/$projectSlug"
+        val userDataDir = "/root/.local/share/code-server/pocket-ide/$projectId"
+        File(runtime.rootfs, userDataDir.removePrefix("/")).mkdirs()
         val executable = resolveCodeServerExecutable(runtime.rootfs)
 
         port = targetPort
@@ -92,6 +94,7 @@ class CodeServerManager(
             "--auth", "none",
             "--disable-telemetry",
             "--disable-update-check",
+            "--user-data-dir", userDataDir,
             guestWorkspacePath,
         )
 

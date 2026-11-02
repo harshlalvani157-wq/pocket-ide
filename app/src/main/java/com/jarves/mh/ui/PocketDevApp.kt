@@ -19,6 +19,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebChromeClient
+import android.webkit.WebStorage
 import android.widget.Toast
 import com.jarves.mh.BuildConfig
 import androidx.activity.compose.BackHandler
@@ -7348,6 +7349,7 @@ private fun CodeServerTab(
     var webView by remember { mutableStateOf<WebView?>(null) }
     var loading by remember { mutableStateOf(false) }
     val effectiveUrl = url ?: "http://127.0.0.1:8443"
+    val codeServerOrigin = "http://127.0.0.1:8443"
 
     BackHandler(enabled = running && webView?.canGoBack() == true) {
         webView?.goBack()
@@ -7625,8 +7627,16 @@ private fun CodeServerTab(
                 AndroidView(
                     factory = { ctx ->
                         WebView(ctx).apply {
-                            webView = this
-                            settings.javaScriptEnabled = true
+                        webView = this
+                        // code-server stores the last opened workspace in browser
+                        // storage. The origin is shared across projects, so clear
+                        // it before loading a new project to prevent restoring the
+                        // previous project's folder.
+                        WebStorage.getInstance().deleteOrigin(codeServerOrigin)
+                        clearCache(true)
+                        clearHistory()
+                        clearFormData()
+                        settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
                             settings.databaseEnabled = true
                             settings.useWideViewPort = true
