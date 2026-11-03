@@ -52,7 +52,7 @@ class CodeServerManager(
             return@withContext Result.failure(IllegalStateException("Code Server is not installed yet"))
         }
 
-        if (isRunning && runningProjectId == projectId && runningProjectSlug == projectSlug && isServerResponding(targetPort)) {
+        if (isRunning && runningProjectId == projectId && runningProjectSlug == projectSlug && isServerResponding(port)) {
             return@withContext Result.success(url)
         }
 
@@ -83,8 +83,10 @@ class CodeServerManager(
         val userDataDir = "/root/.local/share/code-server/pocket-ide/$projectId"
         File(runtime.rootfs, userDataDir.removePrefix("/")).mkdirs()
         val executable = resolveCodeServerExecutable(runtime.rootfs)
-
-        port = targetPort
+        // Never reuse one global port when changing projects. If a previous
+        // code-server/node child survived process teardown, reusing 8443 would
+        // make the new project attach to that old server and old workspace.
+        port = allocatePort(targetPort)
         runningProjectId = projectId
         runningProjectSlug = projectSlug
 
@@ -169,7 +171,25 @@ class CodeServerManager(
         }.getOrDefault(false)
     }
 
+    private fun allocatePort(preferredPort: Int): Int = synchronized(this) {
+        var candidate = nextPort.coerceIn(MIN_DYNAMIC_PORT, MAX_DYNAMIC_PORT)
+        repeat(MAX_DYNAMIC_PORT - MIN_DYNAMIC_PORT + 1) {
+            if (!isServerResponding(candidate)) {
+                nextPort = if (candidate >= MAX_DYNAMIC_PORT) MIN_DYNAMIC_PORT else candidate + 1
+                return candidate
+            }
+            candidate = if (candidate >= MAX_DYNAMIC_PORT) MIN_DYNAMIC_PORT else candidate + 1
+        }
+        // The preferred port is only a last-resort fallback if the bounded
+        // local range is exhausted; startup health checking will report a
+        // real bind failure instead of silently attaching to another project.
+        return preferredPort
+    }
+
     companion object {
         const val DEFAULT_PORT = 8443
+        private const val MIN_DYNAMIC_PORT = DEFAULT_PORT
+        private const val MAX_DYNAMIC_PORT = 10443
+        @Volatile private var nextPort: Int = MIN_DYNAMIC_PORT
     }
 }
