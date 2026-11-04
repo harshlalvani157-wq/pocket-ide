@@ -28,6 +28,14 @@
     <string name="code_server_not_installed">Code Server is not installed yet.</string>
     <string name="code_server_open_browser">Open in external browser</string>
     <string name="code_server_installed_success">Code Server installed successfully</string>
+    <string name="code_server_update_available">Code Server update available</string>
+    <string name="code_server_update_description">A newer stable Code Server release is available: %1$s</string>
+    <string name="code_server_update_later">Later</string>
+    <string name="code_server_update_now">Download and update</string>
+    <string name="code_server_update_check">Check for updates</string>
+    <string name="code_server_update_checking">Checking for stable updates…</string>
+    <string name="code_server_update_downloading">Updating Code Server to %1$s…</string>
+    <string name="code_server_update_failed">Code Server update failed</string>
 
     <!-- Common Actions -->
     <string name="action_ok">OK</string>

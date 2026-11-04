@@ -62,6 +62,7 @@ import com.jarves.mh.runtime.NativeSpawnProcess
 import com.jarves.mh.runtime.RuntimeInstallProgress
 import com.jarves.mh.runtime.RuntimeInstaller
 import com.jarves.mh.runtime.CodeServerManager
+import com.jarves.mh.runtime.CodeServerRelease
 import com.jarves.mh.runtime.RuntimeSetupController
 import com.jarves.mh.runtime.RuntimeSetupService
 import com.jarves.mh.runtime.RuntimeSetupSnapshot
@@ -344,6 +345,10 @@ data class AppUiState(
     val codeServerInstalled: Boolean = false,
     val codeServerInstalling: Boolean = false,
     val codeServerMessage: String? = null,
+    val codeServerUpdate: CodeServerRelease? = null,
+    val codeServerUpdateChecking: Boolean = false,
+    val codeServerUpdating: Boolean = false,
+    val codeServerUpdateMessage: String? = null,
     val isRunning: Boolean = false,
     val queuedFollowUps: List<QueuedFollowUp> = emptyList(),
     val activeSessionId: String? = null,
@@ -912,6 +917,61 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             toastMessage = error.message ?: str(R.string.rt_install_command_failed, 1),
                         )
                     }
+                }
+            }
+        }
+    }
+
+    fun checkCodeServerUpdate() {
+        if (_state.value.codeServerUpdateChecking || _state.value.codeServerUpdating) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _state.update { it.copy(codeServerUpdateChecking = true, codeServerUpdateMessage = null) }
+            val result = runCatching { installer.codeServerUpdateAvailable() }
+            withContext(Dispatchers.Main) {
+                _state.update {
+                    it.copy(
+                        codeServerUpdateChecking = false,
+                        codeServerUpdate = result.getOrNull(),
+                        codeServerUpdateMessage = result.exceptionOrNull()?.message,
+                    )
+                }
+            }
+        }
+    }
+
+    fun dismissCodeServerUpdate() {
+        _state.update { it.copy(codeServerUpdate = null, codeServerUpdateMessage = null) }
+    }
+
+    fun updateCodeServer() {
+        val release = _state.value.codeServerUpdate ?: return
+        if (_state.value.codeServerUpdating) return
+        codeServerManager.stop()
+        _state.update {
+            it.copy(
+                codeServerRunning = false,
+                codeServerUrl = null,
+                codeServerUpdating = true,
+                codeServerUpdateMessage = str(R.string.code_server_update_downloading, release.version),
+            )
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                installer.ensureCodeServerInstalled(forceUpdate = true) { progress ->
+                    _state.update { it.copy(codeServerUpdateMessage = progress.message) }
+                }
+            }
+            withContext(Dispatchers.Main) {
+                _state.update {
+                    it.copy(
+                        codeServerUpdating = false,
+                        codeServerUpdate = null,
+                        codeServerUpdateMessage = result.exceptionOrNull()?.message,
+                        codeServerInstalled = result.isSuccess,
+                    )
+                }
+                result.exceptionOrNull()?.let { error ->
+                    _state.update { it.copy(toastMessage = error.message ?: str(R.string.code_server_update_failed)) }
                 }
             }
         }

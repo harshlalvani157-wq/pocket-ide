@@ -47,6 +47,14 @@ data class AgentUpdateInfo(
     val latestVersion: String,
 )
 
+data class CodeServerRelease(
+    val version: String,
+    val archiveName: String,
+    val archiveUrl: String,
+    val sha256: String,
+    val releaseUrl: String,
+)
+
 enum class RuntimeInstallEvent { STAGE, COMMAND, OUTPUT, DOWNLOAD, COMMAND_COMPLETED, COMPLETED }
 
 private data class RuntimeBundle(
@@ -341,29 +349,81 @@ class RuntimeInstaller(private val context: Context) {
 
     val codeServerVersion: String get() = codeServerMarker.readTextOrNull().orEmpty()
 
+    /** Returns the newest non-draft, non-prerelease ARM64 release from Coder. */
+    fun latestCodeServerRelease(): CodeServerRelease {
+        val request = URL(CODE_SERVER_RELEASES_API).openConnection() as HttpURLConnection
+        return try {
+            request.connectTimeout = 10_000
+            request.readTimeout = 15_000
+            request.instanceFollowRedirects = true
+            request.setRequestProperty("Accept", "application/vnd.github+json")
+            request.setRequestProperty("User-Agent", "Pocket-IDE-Code-Server-Updater")
+            check(request.responseCode in 200..299) { "Code Server release check failed: HTTP ${request.responseCode}" }
+            val releases = org.json.JSONArray(request.inputStream.bufferedReader().use { it.readText() })
+            var best: CodeServerRelease? = null
+            for (index in 0 until releases.length()) {
+                val release = releases.optJSONObject(index) ?: continue
+                if (release.optBoolean("draft") || release.optBoolean("prerelease")) continue
+                val version = release.optString("tag_name").removePrefix("v")
+                if (!isStableVersion(version)) continue
+                val assets = release.optJSONArray("assets") ?: continue
+                val expectedName = "code-server-$version-linux-arm64.tar.gz"
+                for (assetIndex in 0 until assets.length()) {
+                    val asset = assets.optJSONObject(assetIndex) ?: continue
+                    if (asset.optString("name") != expectedName) continue
+                    val digest = asset.optString("digest").removePrefix("sha256:").lowercase()
+                    val url = asset.optString("browser_download_url")
+                    if (!Regex("^[0-9a-f]{64}$").matches(digest) || !url.startsWith("https://")) continue
+                    val candidate = CodeServerRelease(
+                        version = version,
+                        archiveName = expectedName,
+                        archiveUrl = url,
+                        sha256 = digest,
+                        releaseUrl = release.optString("html_url"),
+                    )
+                    if (best == null || compareStableVersions(candidate.version, best!!.version) > 0) best = candidate
+                }
+            }
+            checkNotNull(best) { "No stable ARM64 Code Server release was found" }
+        } finally {
+            request.disconnect()
+        }
+    }
+
+    fun codeServerUpdateAvailable(): CodeServerRelease? {
+        if (!isCodeServerInstalled()) return null
+        val latest = latestCodeServerRelease()
+        return latest.takeIf { compareStableVersions(it.version, codeServerVersion.removePrefix("v")) > 0 }
+    }
+
     fun isCodeServerInstalled(): Boolean = isInstalled() &&
         (File(rootfs, CODE_SERVER_GUEST_PATH.removePrefix("/")).canExecute() ||
             File(rootfs, "usr/bin/code-server").canExecute() ||
             File(rootfs, "root/.local/bin/code-server").canExecute())
 
     /** Installs official code-server (VS Code in the browser) into Ubuntu PRoot. */
-    suspend fun ensureCodeServerInstalled(onProgress: suspend (RuntimeInstallProgress) -> Unit) {
-        if (isCodeServerInstalled()) return
+    suspend fun ensureCodeServerInstalled(
+        forceUpdate: Boolean = false,
+        onProgress: suspend (RuntimeInstallProgress) -> Unit,
+    ) {
+        if (isCodeServerInstalled() && !forceUpdate) return
         check(!BuildConfig.OFFLINE_RUNTIME_BUNDLES) {
             str(R.string.rt_install_code_server_needs_online)
         }
         writeResolver()
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_installing_named, "Code Server"), 0.1f, indeterminate = true))
 
+        val release = latestCodeServerRelease()
+
         // The npm package compiles native argon2 with node-gyp on ARM64/Node 24.
         // Use Coder's self-contained ARM64 archive instead: it includes its own
         // Node runtime and native modules, so installation needs no compiler,
         // Python, npm network resolution, or mutable global npm state.
-        val archive = File(downloads, CODE_SERVER_ARCHIVE_FILE)
+        val archive = File(downloads, release.archiveName)
         downloadVerified(
-            url = CODE_SERVER_ARCHIVE_URL,
+            url = release.archiveUrl,
             destination = archive,
-            expectedChecksum = CODE_SERVER_ARCHIVE_SHA256,
+            expectedChecksum = release.sha256,
         ) { downloaded, total ->
             val ratio = if (total > 0) downloaded.toFloat() / total else 0f
             onProgress(
@@ -385,7 +445,7 @@ class RuntimeInstaller(private val context: Context) {
             "Standalone Code Server archive is missing its launcher"
         }
 
-        val installDir = File(rootfs, "usr/local/lib/code-server-$CODE_SERVER_VERSION")
+        val installDir = File(rootfs, "usr/local/lib/code-server-${release.version}")
         installDir.deleteRecursively()
         installDir.parentFile?.mkdirs()
         check(staging.renameTo(installDir)) { "Could not activate Code Server" }
@@ -395,9 +455,9 @@ class RuntimeInstaller(private val context: Context) {
         File(rootfs, "usr/local/lib/node_modules/code-server").deleteRecursively()
         val launcher = File(rootfs, CODE_SERVER_GUEST_PATH.removePrefix("/"))
         if (launcher.exists() || java.nio.file.Files.isSymbolicLink(launcher.toPath())) launcher.delete()
-        Os.symlink("../lib/code-server-$CODE_SERVER_VERSION/bin/code-server", launcher.absolutePath)
+        Os.symlink("../lib/code-server-${release.version}/bin/code-server", launcher.absolutePath)
         archive.delete()
-        codeServerMarker.writeText(CODE_SERVER_VERSION)
+        codeServerMarker.writeText(release.version)
         check(isCodeServerInstalled()) { "Code Server installation is incomplete" }
         onProgress(RuntimeInstallProgress(str(R.string.rt_install_ready, "Code Server"), 1f))
     }
@@ -1922,14 +1982,22 @@ printf '%s\n' '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decis
 
     private fun File.readTextOrNull(): String? = runCatching { readText().trim() }.getOrNull()
 
+    private fun isStableVersion(version: String): Boolean =
+        Regex("^\\d+\\.\\d+\\.\\d+$").matches(version)
+
+    private fun compareStableVersions(left: String, right: String): Int {
+        val a = left.removePrefix("v").split('.').map { it.toIntOrNull() ?: 0 }
+        val b = right.removePrefix("v").split('.').map { it.toIntOrNull() ?: 0 }
+        return (0 until 3).firstNotNullOfOrNull { index ->
+            (a.getOrElse(index) { 0 } - b.getOrElse(index) { 0 }).takeIf { it != 0 }
+        } ?: 0
+    }
+
     companion object {
         const val AGY_GUEST_PATH = "/root/.local/bin/agy"
         const val GITHUB_CLI_GUEST_PATH = "/root/.local/bin/gh"
         const val CODE_SERVER_GUEST_PATH = "/usr/local/bin/code-server"
-        const val CODE_SERVER_VERSION = "4.98.0"
-        private const val CODE_SERVER_ARCHIVE_FILE = "code-server-4.98.0-linux-arm64.tar.gz"
-        private const val CODE_SERVER_ARCHIVE_URL = "https://github.com/coder/code-server/releases/download/v4.98.0/$CODE_SERVER_ARCHIVE_FILE"
-        private const val CODE_SERVER_ARCHIVE_SHA256 = "06aff3443277189baf2bbbab14b4ea3823553569c70c37a55c440ae9753a9779"
+        private const val CODE_SERVER_RELEASES_API = "https://api.github.com/repos/coder/code-server/releases?per_page=30"
         private const val AGY_VERSION = "1.1.27"
         private const val AGY_RELEASE_URL = "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.1.27-5211191891591168/linux-arm/cli_linux_arm64.tar.gz"
         private const val AGY_RELEASE_SHA512 = "ed45f6930785aa4b42f14e07ace1c9d91a94fb76e760f54acbd7d3d3951e1f957fd456a0dae2a3124dd9a3b689bf7afb7c9303a3e4ba95037fc10063424d9bf9"

@@ -247,6 +247,7 @@ import com.jarves.mh.runtime.AndroidHealthFix
 import com.jarves.mh.runtime.AndroidHealthStatus
 import com.jarves.mh.runtime.AndroidLogLevel
 import com.jarves.mh.runtime.AndroidLogLine
+import com.jarves.mh.runtime.CodeServerRelease
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
@@ -465,6 +466,9 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onInstallCodeServer = viewModel::installCodeServer,
             onStartCodeServer = viewModel::startCodeServer,
             onStopCodeServer = viewModel::stopCodeServer,
+            onCheckCodeServerUpdate = viewModel::checkCodeServerUpdate,
+            onUpdateCodeServer = viewModel::updateCodeServer,
+            onDismissCodeServerUpdate = viewModel::dismissCodeServerUpdate,
         )
         else -> RootScreenHost(state, viewModel, projectsListState)
     }
@@ -4403,6 +4407,9 @@ private fun WorkspaceScreen(
     onInstallCodeServer: () -> Unit = {},
     onStartCodeServer: () -> Unit = {},
     onStopCodeServer: () -> Unit = {},
+    onCheckCodeServerUpdate: () -> Unit = {},
+    onUpdateCodeServer: () -> Unit = {},
+    onDismissCodeServerUpdate: () -> Unit = {},
 ) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
@@ -4791,6 +4798,13 @@ private fun WorkspaceScreen(
                     onInstall = onInstallCodeServer,
                     onStart = onStartCodeServer,
                     onStop = onStopCodeServer,
+                    update = state.codeServerUpdate,
+                    updateChecking = state.codeServerUpdateChecking,
+                    updating = state.codeServerUpdating,
+                    updateMessage = state.codeServerUpdateMessage,
+                    onCheckUpdate = onCheckCodeServerUpdate,
+                    onUpdate = onUpdateCodeServer,
+                    onDismissUpdate = onDismissCodeServerUpdate,
                 )
                 WorkspaceTab.PREVIEW -> PreviewTab(state.previewReady, state.previewUrl)
             }
@@ -7342,12 +7356,22 @@ private fun CodeServerTab(
     onInstall: () -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
+    update: CodeServerRelease?,
+    updateChecking: Boolean,
+    updating: Boolean,
+    updateMessage: String?,
+    onCheckUpdate: () -> Unit,
+    onUpdate: () -> Unit,
+    onDismissUpdate: () -> Unit,
 ) {
     key(projectKey) {
     val context = LocalContext.current
     var webView by remember { mutableStateOf<WebView?>(null) }
     var loading by remember { mutableStateOf(false) }
     val effectiveUrl = url ?: "http://127.0.0.1:8443"
+    LaunchedEffect(installed) {
+        if (installed) onCheckUpdate()
+    }
 
     BackHandler(enabled = running && webView?.canGoBack() == true) {
         webView?.goBack()
@@ -7407,6 +7431,15 @@ private fun CodeServerTab(
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (installed && !running) {
+                            IconButton(onClick = onCheckUpdate, enabled = !updateChecking && !updating) {
+                                if (updateChecking) {
+                                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.code_server_update_check), modifier = Modifier.size(20.dp))
+                                }
+                            }
+                        }
                         if (running) {
                             IconButton(
                                 onClick = {
@@ -7673,6 +7706,30 @@ private fun CodeServerTab(
                 )
             }
         }
+    }
+    if (update != null) {
+        AlertDialog(
+            onDismissRequest = { if (!updating) onDismissUpdate() },
+            title = { Text(stringResource(R.string.code_server_update_available)) },
+            text = {
+                Column {
+                    Text(stringResource(R.string.code_server_update_description, update.version))
+                    if (!updateMessage.isNullOrBlank()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(updateMessage, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = onUpdate, enabled = !updating) {
+                    if (updating) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    else Text(stringResource(R.string.code_server_update_now))
+                }
+            },
+            dismissButton = {
+                if (!updating) TextButton(onClick = onDismissUpdate) { Text(stringResource(R.string.code_server_update_later)) }
+            },
+        )
     }
     }
 }
