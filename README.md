@@ -489,3 +489,6 @@ This project is licensed under the [MIT License](LICENSE). Third-party runtime b
 </p>
 
 but I want the terminal like the stomach only with the extra keys laying down at bottom and we can out and this terminal is not full screen that is the limitation what I think I want the full screen 
+
+
+16 ) to add git clint like the Android code studio app has 
