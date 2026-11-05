@@ -36,6 +36,15 @@
     <string name="code_server_update_checking">Checking for stable updates…</string>
     <string name="code_server_update_downloading">Updating Code Server to %1$s…</string>
     <string name="code_server_update_failed">Code Server update failed</string>
+    <string name="update_blocked_ai_task">An AI task is running. Finish it before updating Pocket IDE.</string>
+    <string name="update_blocked_code_server">Code Server is running. Stop it safely before updating Pocket IDE.</string>
+    <string name="update_blocked_android_build">An Android build is running. Finish it before updating Pocket IDE.</string>
+    <string name="update_blocked_terminal">A terminal command is running. Finish it before updating Pocket IDE.</string>
+    <string name="project_code_server_running">Code Server running · Stop</string>
+    <string name="project_stop_code_server_title">Stop Code Server?</string>
+    <string name="project_stop_code_server_desc">Code Server will be stopped for this project. Your saved files will remain unchanged.</string>
+    <string name="project_stop_code_server">Stop Code Server</string>
+    <string name="settings_app_update_available">A new Pocket IDE release is available</string>
 
     <!-- Common Actions -->
     <string name="action_ok">OK</string>

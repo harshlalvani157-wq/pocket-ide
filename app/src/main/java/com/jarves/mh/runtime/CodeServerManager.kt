@@ -10,180 +10,158 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
-/**
- * Manages the lifecycle of the code-server (VS Code web editor) process
- * inside the private Ubuntu PRoot runtime.
- */
+data class RunningCodeServer(
+    val projectId: String,
+    val projectSlug: String,
+    val port: Int,
+    val url: String,
+)
+
+/** Keeps independent Code Server processes alive across project navigation. */
 class CodeServerManager(
     private val context: Context,
     private val installer: RuntimeInstaller,
 ) {
-    @Volatile private var process: Process? = null
+    private data class ServerHandle(
+        val projectId: String,
+        val projectSlug: String,
+        val port: Int,
+        val process: Process,
+    )
+
+    private val lock = Any()
+    private val servers = LinkedHashMap<String, ServerHandle>()
+
     @Volatile var runningProjectId: String? = null; private set
     @Volatile var runningProjectSlug: String? = null; private set
     @Volatile var port: Int = DEFAULT_PORT; private set
 
-    val isRunning: Boolean get() = process?.isAlive == true
+    val isRunning: Boolean get() = synchronized(lock) { servers.values.any { it.process.isAlive } }
     val url: String get() = "http://127.0.0.1:$port"
 
-    private fun resolveCodeServerExecutable(rootfs: File): String {
-        return when {
-            File(rootfs, "usr/local/bin/code-server").canExecute() -> "/usr/local/bin/code-server"
-            File(rootfs, "usr/bin/code-server").canExecute() -> "/usr/bin/code-server"
-            File(rootfs, "root/.local/bin/code-server").canExecute() -> "/root/.local/bin/code-server"
-            else -> RuntimeInstaller.CODE_SERVER_GUEST_PATH
+    fun runningServers(): List<RunningCodeServer> = synchronized(lock) {
+        servers.values.filter { it.process.isAlive }.map { handle ->
+            RunningCodeServer(handle.projectId, handle.projectSlug, handle.port, "http://127.0.0.1:${handle.port}")
         }
     }
 
-    /**
-     * Starts the code-server instance for the given project workspace.
-     * Binds to loopback interface on the specified port without authentication.
-     */
+    private fun resolveCodeServerExecutable(rootfs: File): String = when {
+        File(rootfs, "usr/local/bin/code-server").canExecute() -> "/usr/local/bin/code-server"
+        File(rootfs, "usr/bin/code-server").canExecute() -> "/usr/bin/code-server"
+        File(rootfs, "root/.local/bin/code-server").canExecute() -> "/root/.local/bin/code-server"
+        else -> RuntimeInstaller.CODE_SERVER_GUEST_PATH
+    }
+
     suspend fun start(
         projectId: String,
         projectSlug: String,
         projectRootPath: String = "",
         targetPort: Int = DEFAULT_PORT,
     ): Result<String> = withContext(Dispatchers.IO) {
-        if (!installer.isInstalled()) {
-            return@withContext Result.failure(IllegalStateException("Linux runtime is not installed"))
-        }
-        if (!installer.isCodeServerInstalled()) {
-            return@withContext Result.failure(IllegalStateException("Code Server is not installed yet"))
-        }
+        if (!installer.isInstalled()) return@withContext Result.failure(IllegalStateException("Linux runtime is not installed"))
+        if (!installer.isCodeServerInstalled()) return@withContext Result.failure(IllegalStateException("Code Server is not installed yet"))
 
-        if (isRunning && runningProjectId == projectId && runningProjectSlug == projectSlug && isServerResponding(port)) {
-            return@withContext Result.success(url)
-        }
-
-        val previous = process
-        stop()
-        if (previous != null && previous.isAlive) {
-            previous.waitFor(1500, TimeUnit.MILLISECONDS)
-            if (previous.isAlive) previous.destroyForcibly()
-        }
-
-        val runtime = runCatching { installer.installedRuntime() }.getOrElse {
-            return@withContext Result.failure(it)
-        }
-
-        // The Files tab stores user code under the immutable project ID. Never
-        // use the display slug here: slugs can collide with legacy workspaces
-        // and would make Code Server and Files point at different directories.
-        val projectBase = File(context.filesDir, "workspaces/$projectId").canonicalFile.apply { mkdirs() }
-        val workspace = if (projectRootPath.isBlank()) {
-            projectBase
-        } else {
-            File(projectBase, projectRootPath).canonicalFile.also {
-                check(it.toPath().startsWith(projectBase.toPath())) { "Invalid project root path" }
-                it.mkdirs()
+        synchronized(lock) {
+            val existing = servers[projectId]
+            if (existing != null && existing.process.isAlive && isServerResponding(existing.port)) {
+                runningProjectId = projectId
+                runningProjectSlug = projectSlug
+                port = existing.port
+                return@withContext Result.success("http://127.0.0.1:${existing.port}")
             }
+            servers.remove(projectId)
+        }
+
+        val runtime = runCatching { installer.installedRuntime() }.getOrElse { return@withContext Result.failure(it) }
+        val projectBase = File(context.filesDir, "workspaces/$projectId").canonicalFile.apply { mkdirs() }
+        val workspace = if (projectRootPath.isBlank()) projectBase else File(projectBase, projectRootPath).canonicalFile.also {
+            check(it.toPath().startsWith(projectBase.toPath())) { "Invalid project root path" }
+            it.mkdirs()
         }
         val guestWorkspacePath = "/workspace/$projectSlug"
         val userDataDir = "/root/.local/share/code-server/pocket-ide/$projectId"
         File(runtime.rootfs, userDataDir.removePrefix("/")).mkdirs()
+        val selectedPort = allocatePort(targetPort)
         val executable = resolveCodeServerExecutable(runtime.rootfs)
-        // Never reuse one global port when changing projects. If a previous
-        // code-server/node child survived process teardown, reusing 8443 would
-        // make the new project attach to that old server and old workspace.
-        port = allocatePort(targetPort)
-        runningProjectId = projectId
-        runningProjectSlug = projectSlug
-
         val guestCommand = listOf(
-            executable,
-            "--bind-addr", "127.0.0.1:$port",
-            "--auth", "none",
-            "--disable-telemetry",
-            "--disable-update-check",
-            "--user-data-dir", userDataDir,
+            executable, "--bind-addr", "127.0.0.1:$selectedPort", "--auth", "none",
+            "--disable-telemetry", "--disable-update-check", "--user-data-dir", userDataDir,
             guestWorkspacePath,
         )
-
-        val environment = mapOf(
-            "SHELL" to "/bin/bash",
-            "HOME" to "/root",
-            "TERM" to "xterm-256color",
-            "LANG" to "C.UTF-8",
-        )
-
-        val outputFile = File(context.cacheDir, "code-server-${System.nanoTime()}.log")
-
+        val outputFile = File(context.cacheDir, "code-server-$projectId-${System.nanoTime()}.log")
         try {
             val spawned = installer.process(
-                proot = runtime.proot,
-                rootfs = runtime.rootfs,
-                workspace = workspace,
-                environment = environment,
-                guestCommand = guestCommand,
-                guestWorkspacePath = guestWorkspacePath,
-                outputFile = outputFile,
+                proot = runtime.proot, rootfs = runtime.rootfs, workspace = workspace,
+                environment = mapOf("SHELL" to "/bin/bash", "HOME" to "/root", "TERM" to "xterm-256color", "LANG" to "C.UTF-8"),
+                guestCommand = guestCommand, guestWorkspacePath = guestWorkspacePath, outputFile = outputFile,
             )
-            process = spawned
-
-            // Check if server binds and starts accepting connections
-            var healthy = false
-            for (attempt in 1..25) {
+            synchronized(lock) {
+                servers[projectId] = ServerHandle(projectId, projectSlug, selectedPort, spawned)
+                runningProjectId = projectId
+                runningProjectSlug = projectSlug
+                port = selectedPort
+            }
+            repeat(25) {
                 if (!spawned.isAlive) {
                     val log = outputFile.takeIf { it.isFile }?.readText()?.takeLast(500).orEmpty()
-                    return@withContext Result.failure(
-                        IllegalStateException("Code Server stopped unexpectedly: ${log.ifBlank { "Exit code unknown" }}")
-                    )
+                    synchronized(lock) { servers.remove(projectId) }
+                    return@withContext Result.failure(IllegalStateException("Code Server stopped unexpectedly: ${log.ifBlank { "Exit code unknown" }}"))
                 }
-                if (isServerResponding(port)) {
-                    healthy = true
-                    break
-                }
+                if (isServerResponding(selectedPort)) return@withContext Result.success("http://127.0.0.1:$selectedPort")
                 delay(600)
             }
-
-            // Return URL even if loopback ping was delayed; WebView will load it
-            Result.success(url)
-        } catch (e: Exception) {
-            Log.e("CodeServerManager", "Failed to start code-server", e)
-            stop()
-            Result.failure(e)
+            Result.success("http://127.0.0.1:$selectedPort")
+        } catch (error: Exception) {
+            Log.e("CodeServerManager", "Failed to start code-server", error)
+            stop(projectId)
+            Result.failure(error)
         }
     }
 
-    /**
-     * Gracefully terminates the running code-server process.
-     */
-    fun stop() {
-        process?.destroy()
-        process = null
-        runningProjectId = null
-        runningProjectSlug = null
+    fun stop(projectId: String? = null) {
+        val handles = synchronized(lock) {
+            if (projectId == null) servers.values.toList() else listOfNotNull(servers[projectId])
+        }
+        handles.forEach { handle ->
+            runCatching {
+                if (handle.process.isAlive) {
+                    handle.process.destroy()
+                    if (!handle.process.waitFor(1200, TimeUnit.MILLISECONDS) && handle.process.isAlive) handle.process.destroyForcibly()
+                }
+            }
+            synchronized(lock) { servers.remove(handle.projectId) }
+        }
+        synchronized(lock) {
+            val current = servers.values.firstOrNull { it.process.isAlive }
+            runningProjectId = current?.projectId
+            runningProjectSlug = current?.projectSlug
+            port = current?.port ?: DEFAULT_PORT
+        }
     }
 
-    /**
-     * Checks if the HTTP server is currently responding on the loopback port.
-     */
-    fun isServerResponding(checkPort: Int = port): Boolean {
-        return runCatching {
-            val connection = URL("http://127.0.0.1:$checkPort").openConnection() as HttpURLConnection
-            connection.connectTimeout = 1000
-            connection.readTimeout = 1000
-            connection.requestMethod = "GET"
-            val responseCode = connection.responseCode
-            connection.disconnect()
-            responseCode in 200..499
-        }.getOrDefault(false)
-    }
+    fun isProjectRunning(projectId: String): Boolean = synchronized(lock) { servers[projectId]?.process?.isAlive == true }
 
-    private fun allocatePort(preferredPort: Int): Int = synchronized(this) {
+    fun isServerResponding(checkPort: Int = port): Boolean = runCatching {
+        val connection = URL("http://127.0.0.1:$checkPort").openConnection() as HttpURLConnection
+        connection.connectTimeout = 1000
+        connection.readTimeout = 1000
+        connection.requestMethod = "GET"
+        val code = connection.responseCode
+        connection.disconnect()
+        code in 200..499
+    }.getOrDefault(false)
+
+    private fun allocatePort(preferredPort: Int): Int = synchronized(lock) {
         var candidate = nextPort.coerceIn(MIN_DYNAMIC_PORT, MAX_DYNAMIC_PORT)
         repeat(MAX_DYNAMIC_PORT - MIN_DYNAMIC_PORT + 1) {
-            if (!isServerResponding(candidate)) {
+            val occupied = servers.values.any { it.port == candidate && it.process.isAlive }
+            if (!occupied && !isServerResponding(candidate)) {
                 nextPort = if (candidate >= MAX_DYNAMIC_PORT) MIN_DYNAMIC_PORT else candidate + 1
                 return candidate
             }
             candidate = if (candidate >= MAX_DYNAMIC_PORT) MIN_DYNAMIC_PORT else candidate + 1
         }
-        // The preferred port is only a last-resort fallback if the bounded
-        // local range is exhausted; startup health checking will report a
-        // real bind failure instead of silently attaching to another project.
-        return preferredPort
+        preferredPort
     }
 
     companion object {

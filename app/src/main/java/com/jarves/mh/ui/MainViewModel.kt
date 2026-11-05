@@ -63,6 +63,7 @@ import com.jarves.mh.runtime.RuntimeInstallProgress
 import com.jarves.mh.runtime.RuntimeInstaller
 import com.jarves.mh.runtime.CodeServerManager
 import com.jarves.mh.runtime.CodeServerRelease
+import com.jarves.mh.runtime.RunningCodeServer
 import com.jarves.mh.runtime.RuntimeSetupController
 import com.jarves.mh.runtime.RuntimeSetupService
 import com.jarves.mh.runtime.RuntimeSetupSnapshot
@@ -345,6 +346,7 @@ data class AppUiState(
     val codeServerInstalled: Boolean = false,
     val codeServerInstalling: Boolean = false,
     val codeServerMessage: String? = null,
+    val runningCodeServers: List<RunningCodeServer> = emptyList(),
     val codeServerUpdate: CodeServerRelease? = null,
     val codeServerUpdateChecking: Boolean = false,
     val codeServerUpdating: Boolean = false,
@@ -408,6 +410,7 @@ data class AppUiState(
     val androidHealthRunning: Boolean = false,
     val androidLogcat: AndroidLogcatState = AndroidLogcatState(),
     val appUpdate: AppUpdateInfo? = null,
+    val appUpdateDeferred: Boolean = false,
     val appUpdateStatus: AppUpdateStatus? = null,
     val appUpdateDownloadedBytes: Long = 0L,
     val appUpdateTotalBytes: Long = -1L,
@@ -1001,6 +1004,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             codeServerStarting = false,
                             codeServerUrl = url,
                             codeServerMessage = null,
+                            runningCodeServers = codeServerManager.runningServers(),
                         )
                     }
                 }.onFailure { error ->
@@ -1009,6 +1013,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             codeServerStarting = false,
                             codeServerRunning = false,
                             codeServerMessage = null,
+                            runningCodeServers = codeServerManager.runningServers(),
                             toastMessage = error.message ?: "Failed to start Code Server",
                         )
                     }
@@ -1018,15 +1023,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopCodeServer() {
-        codeServerManager.stop()
+        _state.value.activeProject?.id?.let(codeServerManager::stop)
         _state.update {
             it.copy(
                 codeServerRunning = false,
                 codeServerStarting = false,
                 codeServerUrl = null,
                 codeServerMessage = null,
+                runningCodeServers = codeServerManager.runningServers(),
             )
         }
+    }
+
+    fun stopBackgroundCodeServer(projectId: String) {
+        codeServerManager.stop(projectId)
+        _state.update { it.copy(runningCodeServers = codeServerManager.runningServers()) }
     }
 
     fun refreshDeveloperDiagnostics() {
@@ -1061,7 +1072,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 androidBuildProcess?.takeIf(Process::isAlive)?.destroyForcibly()
                 androidBuildProcess = null
             }
-            if (!current.codeServerRunning) {
+            if (current.runningCodeServers.isEmpty()) {
                 codeServerManager.stop()
             }
             withContext(Dispatchers.Main) {
@@ -2414,10 +2425,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             preferences.lastAppUpdateCheckMillis = System.currentTimeMillis()
             if (update != null) {
                 _state.update {
-                    it.copy(appUpdate = update, appUpdateStatus = AppUpdateStatus.AVAILABLE, appUpdateError = null)
+                    it.copy(appUpdate = update, appUpdateDeferred = false, appUpdateStatus = AppUpdateStatus.AVAILABLE, appUpdateError = null)
                 }
             }
         }
+    }
+
+    fun deferAppUpdate() {
+        _state.update { it.copy(appUpdateDeferred = true) }
     }
 
     /** Debug builds only: persist a manifest URL override and re-check immediately. */
@@ -2441,6 +2456,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun installAppUpdate() {
         val info = _state.value.appUpdate ?: return
+        val current = _state.value
+        if (current.isRunning || current.projectTerminalRunning || current.androidBuildRunning || current.runningCodeServers.isNotEmpty()) {
+            val reason = when {
+                current.isRunning -> str(R.string.update_blocked_ai_task)
+                current.runningCodeServers.isNotEmpty() -> str(R.string.update_blocked_code_server)
+                current.androidBuildRunning -> str(R.string.update_blocked_android_build)
+                else -> str(R.string.update_blocked_terminal)
+            }
+            _state.update { it.copy(appUpdateError = reason, appUpdateStatus = AppUpdateStatus.AVAILABLE) }
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !getApplication<Application>().packageManager.canRequestPackageInstalls()) {
             _state.update { it.copy(appUpdateStatus = AppUpdateStatus.PERMISSION_REQUIRED) }
             return
@@ -3135,7 +3161,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             return
         }
-        codeServerManager.stop()
         configureBridgeRoots(project.id, project.rootPath)
         val terminal = loadProjectTerminal(project)
         val suggestedRoot = if (project.rootPath.isBlank()) detectNestedProjectRoot(project) else null
@@ -3178,6 +3203,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 codeServerInstalled = installer.isCodeServerInstalled(),
                 codeServerRunning = codeServerManager.isRunning && codeServerManager.runningProjectId == project.id,
                 codeServerUrl = if (codeServerManager.isRunning && codeServerManager.runningProjectId == project.id) codeServerManager.url else null,
+                runningCodeServers = codeServerManager.runningServers(),
                 codeServerStarting = false,
                 pendingAttachments = emptyList(),
                 androidBuildRunning = false,
@@ -3240,7 +3266,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        codeServerManager.stop()
         _state.update {
             it.copy(
                 activeProject = null,
@@ -3268,6 +3293,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 codeServerStarting = false,
                 codeServerUrl = null,
                 codeServerMessage = null,
+                runningCodeServers = codeServerManager.runningServers(),
                 pendingAttachments = emptyList(),
             )
         }

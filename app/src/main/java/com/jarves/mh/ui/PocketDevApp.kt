@@ -2516,10 +2516,12 @@ private fun RootScreenHost(
                     onCloneGitHub = viewModel::cloneGitHubRepository,
                     onRenameProject = viewModel::renameProject,
                     onDeleteProject = viewModel::deleteProject,
+                    onStopCodeServer = viewModel::stopBackgroundCodeServer,
                     onSettings = { screen = RootScreen.SETTINGS },
                     onPing = viewModel::pingApi,
                     onToggleTheme = viewModel::toggleTheme,
                     onInstallUpdate = viewModel::installAppUpdate,
+                    onDeferUpdate = viewModel::deferAppUpdate,
                 )
                 RootScreen.AGENT -> AgentScreen(
                     state = state,
@@ -2578,6 +2580,7 @@ private fun RootScreenHost(
                     onRefreshDiagnostics = viewModel::refreshDeveloperDiagnostics,
                     onStopInactiveProcesses = viewModel::stopInactiveDeveloperProcesses,
                     onClearRuntimeCache = viewModel::clearDeveloperRuntimeCache,
+                    onInstallAppUpdate = viewModel::installAppUpdate,
                 )
             }
         }
@@ -3551,6 +3554,8 @@ private fun ProjectsScreen(
     onPing: () -> Unit,
     onToggleTheme: () -> Unit,
     onInstallUpdate: () -> Unit,
+    onStopCodeServer: (String) -> Unit,
+    onDeferUpdate: () -> Unit,
 ) {
     var showCreate by rememberSaveable { mutableStateOf(false) }
     var showUpdateDialog by rememberSaveable { mutableStateOf(false) }
@@ -3569,8 +3574,8 @@ private fun ProjectsScreen(
     val importZipLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) onImportZip(uri)
     }
-    LaunchedEffect(state.appUpdate?.versionCode) {
-        if (state.appUpdate != null) showUpdateDialog = true
+    LaunchedEffect(state.appUpdate?.versionCode, state.appUpdateDeferred) {
+        if (state.appUpdate != null && !state.appUpdateDeferred) showUpdateDialog = true
     }
     Scaffold(
         topBar = {
@@ -3805,9 +3810,11 @@ private fun ProjectsScreen(
                         taskRunning = state.isRunning && state.activeProject?.id == project.id,
                         terminalRunning = state.projectTerminalRunning && state.activeProject?.id == project.id,
                         buildRunning = state.androidBuildRunning && state.activeProject?.id == project.id,
+                        codeServerRunning = state.runningCodeServers.any { it.projectId == project.id },
                         onOpen = { onOpen(project) },
                         onRename = { onRenameProject(project.id, it) },
                         onDelete = { onDeleteProject(project.id) },
+                        onStopCodeServer = { onStopCodeServer(project.id) },
                     )
                 }
             }
@@ -4062,7 +4069,13 @@ private fun ProjectsScreen(
                     Text(when { !canInstall -> stringResource(R.string.ws_grant_permission); downloading -> stringResource(R.string.ws_downloading_ellipsis); installing -> stringResource(R.string.tools_installing); else -> stringResource(R.string.ws_download_and_install) })
                 }
             },
-            dismissButton = { if (!installing) TextButton(onClick = { showUpdateDialog = false }) { Text(stringResource(R.string.ws_later)) } },
+            dismissButton = {
+                if (!installing) {
+                    TextButton(onClick = { onDeferUpdate(); showUpdateDialog = false }) {
+                        Text(stringResource(R.string.ws_later))
+                    }
+                }
+            },
         )
     }
 }
@@ -4162,13 +4175,16 @@ private fun ProjectCard(
     taskRunning: Boolean,
     terminalRunning: Boolean,
     buildRunning: Boolean,
+    codeServerRunning: Boolean,
     onOpen: () -> Unit,
     onRename: (String) -> Unit,
     onDelete: () -> Unit,
+    onStopCodeServer: () -> Unit,
 ) {
     var menuOpen by rememberSaveable(project.id) { mutableStateOf(false) }
     var showRename by rememberSaveable(project.id) { mutableStateOf(false) }
     var showDelete by rememberSaveable(project.id) { mutableStateOf(false) }
+    var showStopCodeServer by rememberSaveable(project.id) { mutableStateOf(false) }
     var renameText by rememberSaveable(project.id) { mutableStateOf(project.name) }
     Card(Modifier.fillMaxWidth().clickable(onClick = onOpen), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Row(Modifier.padding(start = 16.dp, top = 12.dp, bottom = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -4214,6 +4230,20 @@ private fun ProjectCard(
                 )
                 Text("/workspace/${project.slug}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
                 Text("${project.language} · ${project.localizedUpdatedAt()}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                if (codeServerRunning) {
+                    Spacer(Modifier.height(5.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.clickable { showStopCodeServer = true },
+                    ) {
+                        Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Stop, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.width(5.dp))
+                            Text(stringResource(R.string.project_code_server_running), color = MaterialTheme.colorScheme.error, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
             }
             Box {
                 IconButton(onClick = { menuOpen = true }) { Icon(Icons.Default.MoreVert, stringResource(R.string.ws_project_options)) }
@@ -4248,6 +4278,19 @@ private fun ProjectCard(
             text = { Text(stringResource(R.string.ws_delete_project_desc)) },
             confirmButton = { TextButton(onClick = { onDelete(); showDelete = false }) { Text(stringResource(R.string.action_delete), color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { showDelete = false }) { Text(stringResource(R.string.action_cancel)) } },
+        )
+    }
+    if (showStopCodeServer) {
+        AlertDialog(
+            onDismissRequest = { showStopCodeServer = false },
+            title = { Text(stringResource(R.string.project_stop_code_server_title)) },
+            text = { Text(stringResource(R.string.project_stop_code_server_desc)) },
+            confirmButton = {
+                TextButton(onClick = { showStopCodeServer = false; onStopCodeServer() }) {
+                    Text(stringResource(R.string.project_stop_code_server), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { showStopCodeServer = false }) { Text(stringResource(R.string.action_cancel)) } },
         )
     }
 }

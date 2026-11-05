@@ -32,6 +32,7 @@ import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -144,6 +145,7 @@ fun SettingsScreen(
     onRefreshDiagnostics: () -> Unit = {},
     onStopInactiveProcesses: () -> Unit = {},
     onClearRuntimeCache: () -> Unit = {},
+    onInstallAppUpdate: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var expanded by rememberSaveable { mutableStateOf<SettingsSection?>(null) }
@@ -468,6 +470,33 @@ fun SettingsScreen(
                         onSave = onSetDebugUpdateManifestUrl,
                         onClear = onClearDebugUpdateManifestUrl,
                     )
+                }
+            }
+
+            state.appUpdate?.let { update ->
+                item {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().clickable(onClick = onInstallAppUpdate),
+                        color = PocketOrange.copy(alpha = 0.11f),
+                        shape = RoundedCornerShape(16.dp),
+                        border = BorderStroke(1.dp, PocketOrange.copy(alpha = 0.45f)),
+                    ) {
+                        Column(Modifier.padding(14.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Download, null, tint = PocketOrange, modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text("Pocket IDE ${update.versionName}", fontWeight = FontWeight.Bold)
+                                    Text(stringResource(R.string.settings_app_update_available), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Text(stringResource(R.string.ws_update), color = PocketOrange, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                            state.appUpdateError?.let { error ->
+                                Spacer(Modifier.height(7.dp))
+                                Text(error, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+                            }
+                        }
+                    }
                 }
             }
 
