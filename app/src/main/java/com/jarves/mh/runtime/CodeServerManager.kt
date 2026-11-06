@@ -45,6 +45,12 @@ class CodeServerManager(
         }
     }
 
+    fun runningServer(projectId: String): RunningCodeServer? = synchronized(lock) {
+        servers[projectId]?.takeIf { it.process.isAlive }?.let { handle ->
+            RunningCodeServer(handle.projectId, handle.projectSlug, handle.port, "http://127.0.0.1:${handle.port}")
+        }
+    }
+
     private fun resolveCodeServerExecutable(rootfs: File): String = when {
         File(rootfs, "usr/local/bin/code-server").canExecute() -> "/usr/local/bin/code-server"
         File(rootfs, "usr/bin/code-server").canExecute() -> "/usr/bin/code-server"

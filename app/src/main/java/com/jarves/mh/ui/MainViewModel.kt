@@ -3171,6 +3171,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val saved = preferences.loadMessages(project.id, activeChat.id)
         val msgs = saved.ifEmpty { listOf(ChatMessage(fromUser = false, text = "Hi! Tell me what you want to build or change.")) }
         val androidBuild = loadAndroidBuildRecord(project.id)
+        val projectCodeServer = codeServerManager.runningServer(project.id)
         _state.update {
             it.copy(
                 activeProject = project,
@@ -3201,8 +3202,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 previewReady = false,
                 previewUrl = null,
                 codeServerInstalled = installer.isCodeServerInstalled(),
-                codeServerRunning = codeServerManager.isRunning && codeServerManager.runningProjectId == project.id,
-                codeServerUrl = if (codeServerManager.isRunning && codeServerManager.runningProjectId == project.id) codeServerManager.url else null,
+                codeServerRunning = projectCodeServer != null,
+                codeServerUrl = projectCodeServer?.url,
                 runningCodeServers = codeServerManager.runningServers(),
                 codeServerStarting = false,
                 pendingAttachments = emptyList(),
