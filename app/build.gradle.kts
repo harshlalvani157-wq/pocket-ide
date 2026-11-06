@@ -25,6 +25,10 @@ val hasUploadSigning = listOf(
     uploadKeyAlias,
     uploadKeyPassword,
 ).all { !it.isNullOrBlank() }
+// CI runners do not preserve Android's default debug keystore. Use the
+// intentionally non-production Pocket IDE debug key so debug APKs can update
+// each other across GitHub Actions runs.
+val stableDebugStore = rootProject.file("signing/pocket-ide-debug.keystore")
 val runtimeReleaseBaseUrl =
     "https://github.com/techjarves/Mobile-Harness/releases/download/runtime-2026.09.4"
 // This fork is intentionally independent from the original Mobile Harness
@@ -63,6 +67,14 @@ android {
     ndkVersion = providers.gradleProperty("mhNdkVersion").orNull ?: "28.2.13676358"
 
     signingConfigs {
+        if (stableDebugStore.isFile) {
+            create("pocketDebug") {
+                storeFile = stableDebugStore
+                storePassword = "pocket-ide-debug"
+                keyAlias = "pocket-ide-debug"
+                keyPassword = "pocket-ide-debug"
+            }
+        }
         if (hasUploadSigning) {
             create("upload") {
                 storeFile = rootProject.file(checkNotNull(uploadStorePath))
@@ -81,8 +93,8 @@ android {
         targetSdk = if (playBuild) 36 else 28
         // Keep literal defaults so F-Droid's static manifest parser can detect
         // the tagged release. Gradle properties may still override Play builds.
-        versionCode = 7
-        versionName = "1.0.6"
+        versionCode = 8
+        versionName = "1.0.7"
         providers.gradleProperty("appVersionCode").orNull?.toIntOrNull()?.let { versionCode = it }
         providers.gradleProperty("appVersionName").orNull?.let { versionName = it }
 
@@ -124,6 +136,9 @@ android {
 
     buildTypes {
         debug {
+            if (stableDebugStore.isFile) {
+                signingConfig = signingConfigs.getByName("pocketDebug")
+            }
             buildConfigField(
                 "String",
                 "TEST_OPENROUTER_API_KEY",
