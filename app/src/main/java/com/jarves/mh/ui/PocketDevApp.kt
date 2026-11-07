@@ -1,5 +1,5 @@
 package com.jarves.mh.ui
-
+import android.app.Activity
 import android.Manifest
 import android.app.ActivityManager
 import android.content.Intent
@@ -42,6 +42,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.animation.core.Animatable
@@ -62,6 +63,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -204,6 +206,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.input.pointer.consume
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
@@ -218,6 +222,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.jarves.mh.model.ActivityItem
 import com.jarves.mh.model.AgentKind
 import com.jarves.mh.model.ChangeItem
@@ -4462,7 +4469,31 @@ private fun WorkspaceScreen(
     onCodeServerScaleChange: (Float) -> Unit = {},
 ) {
     var editorFullscreen by rememberSaveable { mutableStateOf(false) }
+    var floatingExpanded by rememberSaveable { mutableStateOf(false) }
+    var showDisplaySettings by rememberSaveable { mutableStateOf(false) }
+    var floatingOffsetX by rememberSaveable { mutableFloatStateOf(0f) }
+    var floatingOffsetY by rememberSaveable { mutableFloatStateOf(0f) }
     val codeServerScale = state.codeServerUiScale
+    val windowView = LocalView.current
+    DisposableEffect(editorFullscreen) {
+        val window = (windowView.context as? Activity)?.window
+        val controller = window?.let { WindowCompat.getInsetsController(it, windowView) }
+        if (window != null && controller != null) {
+            WindowCompat.setDecorFitsSystemWindows(window, !editorFullscreen)
+            if (editorFullscreen) {
+                controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                controller.hide(WindowInsetsCompat.Type.systemBars())
+            } else {
+                controller.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+        onDispose {
+            if (window != null && controller != null) {
+                WindowCompat.setDecorFitsSystemWindows(window, true)
+                controller.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
     BackHandler {
         if (editorFullscreen) editorFullscreen = false else onBack()
     }
@@ -4564,6 +4595,9 @@ private fun WorkspaceScreen(
     var selectedTab by rememberSaveable { mutableStateOf(WorkspaceTab.CHAT) }
     var showChats by rememberSaveable { mutableStateOf(false) }
     var showAndroidBuild by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(selectedTab, state.codeServerRunning) {
+        if (selectedTab == WorkspaceTab.EDITOR && state.codeServerRunning) editorFullscreen = true
+    }
     val activeChat = state.projectChats.firstOrNull { it.id == state.activeChatId }
     val requestAndroidAction: (AndroidAction) -> Unit = { action ->
         val mayInstall = action in setOf(AndroidAction.INSTALL, AndroidAction.RUN, AndroidAction.BUILD_AND_RUN)
@@ -4863,14 +4897,58 @@ private fun WorkspaceScreen(
                     onToggleFullscreen = { editorFullscreen = !editorFullscreen },
                     uiScale = codeServerScale,
                     onUiScaleChange = onCodeServerScaleChange,
-                    onNavigate = { tab ->
-                        editorFullscreen = false
-                        selectedTab = tab
-                        if (tab == WorkspaceTab.FILES) onRefreshFiles()
-                        if (tab == WorkspaceTab.TERMINAL) onTerminalOpened()
-                    },
                 )
                 WorkspaceTab.PREVIEW -> PreviewTab(state.previewReady, state.previewUrl)
+            }
+            CodeServerFloatingBall(
+                expanded = floatingExpanded,
+                offsetX = floatingOffsetX,
+                offsetY = floatingOffsetY,
+                onDrag = { dx, dy ->
+                    floatingOffsetX = (floatingOffsetX + dx).coerceIn(-320f, 0f)
+                    floatingOffsetY = (floatingOffsetY + dy).coerceIn(-1400f, 0f)
+                },
+                onExpandedChange = { floatingExpanded = it },
+                onNavigate = { tab ->
+                    editorFullscreen = tab == WorkspaceTab.EDITOR && state.codeServerRunning
+                    selectedTab = tab
+                    if (tab == WorkspaceTab.FILES) onRefreshFiles()
+                    if (tab == WorkspaceTab.TERMINAL) onTerminalOpened()
+                },
+                onOpenSettings = { showDisplaySettings = true },
+                onToggleFullscreen = {
+                    if (selectedTab != WorkspaceTab.EDITOR) {
+                        selectedTab = WorkspaceTab.EDITOR
+                        editorFullscreen = state.codeServerRunning
+                    } else {
+                        editorFullscreen = !editorFullscreen
+                    }
+                },
+            )
+        }
+    }
+    if (showDisplaySettings) {
+        ModalBottomSheet(onDismissRequest = { showDisplaySettings = false }) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 22.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text("Code Server display", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("Adjust the editor size for your phone. This setting is saved for future sessions.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("UI scale: ${(codeServerScale * 100).roundToInt()}%", fontWeight = FontWeight.SemiBold)
+                Slider(
+                    value = codeServerScale,
+                    onValueChange = onCodeServerScaleChange,
+                    valueRange = 0.75f..1.5f,
+                    steps = 14,
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = { onCodeServerScaleChange(1f) }) { Text("Reset") }
+                    TextButton(onClick = { showDisplaySettings = false }) { Text(stringResource(R.string.action_close)) }
+                }
             }
         }
     }
@@ -7432,14 +7510,11 @@ private fun CodeServerTab(
     onToggleFullscreen: () -> Unit,
     uiScale: Float,
     onUiScaleChange: (Float) -> Unit,
-    onNavigate: (WorkspaceTab) -> Unit,
 ) {
     key(projectKey) {
     val context = LocalContext.current
     var webView by remember { mutableStateOf<WebView?>(null) }
     var loading by remember { mutableStateOf(false) }
-    var floatingExpanded by rememberSaveable { mutableStateOf(false) }
-    var showDisplaySettings by rememberSaveable { mutableStateOf(false) }
     val effectiveUrl = url ?: "http://127.0.0.1:8443"
     LaunchedEffect(installed) {
         if (installed) onCheckUpdate()
@@ -7784,15 +7859,6 @@ private fun CodeServerTab(
                     },
                     modifier = Modifier.fillMaxSize(),
                 )
-                if (fullscreen && running) {
-                    CodeServerFloatingBall(
-                        expanded = floatingExpanded,
-                        onExpandedChange = { floatingExpanded = it },
-                        onNavigate = onNavigate,
-                        onOpenSettings = { showDisplaySettings = true },
-                        onToggleFullscreen = onToggleFullscreen,
-                    )
-                }
                 }
             }
         }
@@ -7821,47 +7887,27 @@ private fun CodeServerTab(
             },
         )
     }
-    if (showDisplaySettings) {
-        ModalBottomSheet(onDismissRequest = { showDisplaySettings = false }) {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(horizontal = 22.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text("Code Server display", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text("Adjust the editor size for your phone. This setting stays active while you work in this project.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("UI scale: ${(uiScale * 100).roundToInt()}%", fontWeight = FontWeight.SemiBold)
-                Slider(
-                    value = uiScale,
-                    onValueChange = onUiScaleChange,
-                    valueRange = 0.75f..1.5f,
-                    steps = 14,
-                )
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = { onUiScaleChange(1f) }) { Text("Reset") }
-                    TextButton(onClick = { showDisplaySettings = false }) { Text(stringResource(R.string.action_close)) }
-                }
-            }
-        }
-    }
     }
 }
 
 @Composable
 private fun BoxScope.CodeServerFloatingBall(
     expanded: Boolean,
+    offsetX: Float,
+    offsetY: Float,
+    onDrag: (Float, Float) -> Unit,
     onExpandedChange: (Boolean) -> Unit,
     onNavigate: (WorkspaceTab) -> Unit,
     onOpenSettings: () -> Unit,
     onToggleFullscreen: () -> Unit,
 ) {
+    val density = LocalDensity.current
     Surface(
         modifier = Modifier
             .align(Alignment.BottomEnd)
+            .offset(x = offsetX.dp, y = offsetY.dp)
             .navigationBarsPadding()
-            .padding(14.dp),
+            .padding(6.dp),
         shape = RoundedCornerShape(28.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
         tonalElevation = 8.dp,
@@ -7880,9 +7926,21 @@ private fun BoxScope.CodeServerFloatingBall(
                 IconButton(onClick = { onExpandedChange(false) }) { Icon(Icons.Default.Close, "Collapse") }
             }
         } else {
-            IconButton(onClick = { onExpandedChange(true) }, modifier = Modifier.size(52.dp)) {
-                Icon(Icons.Default.Code, "Open Code Server controls", tint = PocketOrange)
-            }
+            Box(
+                modifier = Modifier
+                    .size(34.dp)
+                    .clickable { onExpandedChange(true) }
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            onDrag(
+                                dragAmount.x / density.density,
+                                dragAmount.y / density.density,
+                            )
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Default.Code, "Open Code Server controls", Modifier.size(18.dp), tint = PocketOrange) }
         }
     }
 }
