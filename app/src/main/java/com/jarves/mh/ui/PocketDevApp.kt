@@ -13,6 +13,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 import android.provider.Settings
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -46,6 +47,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -107,6 +109,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -165,6 +169,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Tab
@@ -469,6 +474,7 @@ fun PocketDevApp(viewModel: MainViewModel = viewModel()) {
             onCheckCodeServerUpdate = viewModel::checkCodeServerUpdate,
             onUpdateCodeServer = viewModel::updateCodeServer,
             onDismissCodeServerUpdate = viewModel::dismissCodeServerUpdate,
+            onCodeServerScaleChange = viewModel::setCodeServerUiScale,
         )
         else -> RootScreenHost(state, viewModel, projectsListState)
     }
@@ -4453,8 +4459,13 @@ private fun WorkspaceScreen(
     onCheckCodeServerUpdate: () -> Unit = {},
     onUpdateCodeServer: () -> Unit = {},
     onDismissCodeServerUpdate: () -> Unit = {},
+    onCodeServerScaleChange: (Float) -> Unit = {},
 ) {
-    BackHandler(onBack = onBack)
+    var editorFullscreen by rememberSaveable { mutableStateOf(false) }
+    val codeServerScale = state.codeServerUiScale
+    BackHandler {
+        if (editorFullscreen) editorFullscreen = false else onBack()
+    }
     val context = LocalContext.current
     val isAndroidProject = state.androidProjectDetected
     val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
@@ -4658,7 +4669,7 @@ private fun WorkspaceScreen(
     }
     Scaffold(
         topBar = {
-            TopAppBar(
+            if (!editorFullscreen) TopAppBar(
                 title = {
                     Column(Modifier.fillMaxWidth()) {
                         Text(
@@ -4701,7 +4712,7 @@ private fun WorkspaceScreen(
             )
         },
         bottomBar = {
-            if (!keyboardVisible) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+            if (!editorFullscreen && !keyboardVisible) NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 WorkspaceTab.entries.filter { it != WorkspaceTab.CHANGES }.forEach { tab ->
                     NavigationBarItem(
                         selected = selectedTab == tab,
@@ -4722,7 +4733,7 @@ private fun WorkspaceScreen(
             }
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
+        Box(Modifier.fillMaxSize().padding(if (editorFullscreen) PaddingValues(0.dp) else padding)) {
             when (selectedTab) {
                 WorkspaceTab.CHAT -> ChatTab(
                     state.messages,
@@ -4848,6 +4859,16 @@ private fun WorkspaceScreen(
                     onCheckUpdate = onCheckCodeServerUpdate,
                     onUpdate = onUpdateCodeServer,
                     onDismissUpdate = onDismissCodeServerUpdate,
+                    fullscreen = editorFullscreen,
+                    onToggleFullscreen = { editorFullscreen = !editorFullscreen },
+                    uiScale = codeServerScale,
+                    onUiScaleChange = onCodeServerScaleChange,
+                    onNavigate = { tab ->
+                        editorFullscreen = false
+                        selectedTab = tab
+                        if (tab == WorkspaceTab.FILES) onRefreshFiles()
+                        if (tab == WorkspaceTab.TERMINAL) onTerminalOpened()
+                    },
                 )
                 WorkspaceTab.PREVIEW -> PreviewTab(state.previewReady, state.previewUrl)
             }
@@ -7387,6 +7408,7 @@ private fun PreviewTab(ready: Boolean, url: String?) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CodeServerTab(
     projectKey: String,
@@ -7406,22 +7428,33 @@ private fun CodeServerTab(
     onCheckUpdate: () -> Unit,
     onUpdate: () -> Unit,
     onDismissUpdate: () -> Unit,
+    fullscreen: Boolean,
+    onToggleFullscreen: () -> Unit,
+    uiScale: Float,
+    onUiScaleChange: (Float) -> Unit,
+    onNavigate: (WorkspaceTab) -> Unit,
 ) {
     key(projectKey) {
     val context = LocalContext.current
     var webView by remember { mutableStateOf<WebView?>(null) }
     var loading by remember { mutableStateOf(false) }
+    var floatingExpanded by rememberSaveable { mutableStateOf(false) }
+    var showDisplaySettings by rememberSaveable { mutableStateOf(false) }
     val effectiveUrl = url ?: "http://127.0.0.1:8443"
     LaunchedEffect(installed) {
         if (installed) onCheckUpdate()
     }
+    LaunchedEffect(uiScale, webView) {
+        webView?.settings?.textZoom = (uiScale * 100f).roundToInt()
+        webView?.setInitialScale((uiScale * 100f).roundToInt())
+    }
 
-    BackHandler(enabled = running && webView?.canGoBack() == true) {
+    BackHandler(enabled = !fullscreen && running && webView?.canGoBack() == true) {
         webView?.goBack()
     }
 
     Column(Modifier.fillMaxSize()) {
-        Surface(
+        if (!fullscreen) Surface(
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
             tonalElevation = 1.dp,
         ) {
@@ -7505,6 +7538,9 @@ private fun CodeServerTab(
                                     contentDescription = stringResource(R.string.ws_refresh_preview),
                                     modifier = Modifier.size(20.dp),
                                 )
+                            }
+                            IconButton(onClick = onToggleFullscreen) {
+                                Icon(Icons.Default.Fullscreen, "Fullscreen", modifier = Modifier.size(20.dp))
                             }
                             IconButton(
                                 onClick = onStop,
@@ -7698,6 +7734,7 @@ private fun CodeServerTab(
                 }
             }
             else -> {
+                Box(Modifier.fillMaxSize()) {
                 AndroidView(
                     factory = { ctx ->
                         WebView(ctx).apply {
@@ -7747,6 +7784,16 @@ private fun CodeServerTab(
                     },
                     modifier = Modifier.fillMaxSize(),
                 )
+                if (fullscreen && running) {
+                    CodeServerFloatingBall(
+                        expanded = floatingExpanded,
+                        onExpandedChange = { floatingExpanded = it },
+                        onNavigate = onNavigate,
+                        onOpenSettings = { showDisplaySettings = true },
+                        onToggleFullscreen = onToggleFullscreen,
+                    )
+                }
+                }
             }
         }
     }
@@ -7774,6 +7821,69 @@ private fun CodeServerTab(
             },
         )
     }
+    if (showDisplaySettings) {
+        ModalBottomSheet(onDismissRequest = { showDisplaySettings = false }) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 22.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text("Code Server display", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("Adjust the editor size for your phone. This setting stays active while you work in this project.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("UI scale: ${(uiScale * 100).roundToInt()}%", fontWeight = FontWeight.SemiBold)
+                Slider(
+                    value = uiScale,
+                    onValueChange = onUiScaleChange,
+                    valueRange = 0.75f..1.5f,
+                    steps = 14,
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = { onUiScaleChange(1f) }) { Text("Reset") }
+                    TextButton(onClick = { showDisplaySettings = false }) { Text(stringResource(R.string.action_close)) }
+                }
+            }
+        }
+    }
+    }
+}
+
+@Composable
+private fun BoxScope.CodeServerFloatingBall(
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    onNavigate: (WorkspaceTab) -> Unit,
+    onOpenSettings: () -> Unit,
+    onToggleFullscreen: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .align(Alignment.BottomEnd)
+            .navigationBarsPadding()
+            .padding(14.dp),
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+        tonalElevation = 8.dp,
+        shadowElevation = 8.dp,
+    ) {
+        if (expanded) {
+            Row(
+                Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = { onNavigate(WorkspaceTab.CHAT) }) { Icon(Icons.Default.Chat, "Chat") }
+                IconButton(onClick = { onNavigate(WorkspaceTab.FILES) }) { Icon(Icons.Default.Folder, "Files") }
+                IconButton(onClick = { onNavigate(WorkspaceTab.TERMINAL) }) { Icon(Icons.Default.Terminal, "Terminal") }
+                IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, "Code Server settings") }
+                IconButton(onClick = onToggleFullscreen) { Icon(Icons.Default.FullscreenExit, "Exit fullscreen") }
+                IconButton(onClick = { onExpandedChange(false) }) { Icon(Icons.Default.Close, "Collapse") }
+            }
+        } else {
+            IconButton(onClick = { onExpandedChange(true) }, modifier = Modifier.size(52.dp)) {
+                Icon(Icons.Default.Code, "Open Code Server controls", tint = PocketOrange)
+            }
+        }
     }
 }
 

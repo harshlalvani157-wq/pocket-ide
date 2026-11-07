@@ -351,6 +351,7 @@ data class AppUiState(
     val codeServerUpdateChecking: Boolean = false,
     val codeServerUpdating: Boolean = false,
     val codeServerUpdateMessage: String? = null,
+    val codeServerUiScale: Float = 1f,
     val isRunning: Boolean = false,
     val queuedFollowUps: List<QueuedFollowUp> = emptyList(),
     val activeSessionId: String? = null,
@@ -511,6 +512,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             antigravityEffort = preferences.antigravityEffort,
             themeMode = runCatching { com.jarves.mh.ui.theme.AppThemeMode.valueOf(preferences.themeMode.uppercase()) }
                 .getOrDefault(com.jarves.mh.ui.theme.AppThemeMode.DARK),
+            codeServerUiScale = preferences.codeServerUiScale,
             languageCode = preferences.languageCode,
             projects = preferences.loadProjects(),
             githubAuthStatus = GitHubAuthStatus.DISCONNECTED,
@@ -884,6 +886,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val installed = installer.isCodeServerInstalled()
         _state.update { it.copy(codeServerInstalled = installed) }
         return installed
+    }
+
+    fun setCodeServerUiScale(value: Float) {
+        val scale = value.coerceIn(0.75f, 1.5f)
+        preferences.codeServerUiScale = scale
+        _state.update { it.copy(codeServerUiScale = scale) }
     }
 
     fun installCodeServer() {

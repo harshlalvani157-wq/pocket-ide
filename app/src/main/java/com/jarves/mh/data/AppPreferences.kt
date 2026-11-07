@@ -104,6 +104,10 @@ class AppPreferences(private val context: Context) {
         get() = preferences.getString("theme_mode", "dark") ?: "dark"
         set(value) { preferences.edit().putString("theme_mode", value).apply() }
 
+    var codeServerUiScale: Float
+        get() = preferences.getFloat("code_server_ui_scale", 1f).coerceIn(0.75f, 1.5f)
+        set(value) { preferences.edit().putFloat("code_server_ui_scale", value.coerceIn(0.75f, 1.5f)).apply() }
+
     var languageCode: String
         get() = preferences.getString("language_code", "system") ?: "system"
         set(value) { preferences.edit().putString("language_code", value).apply() }
