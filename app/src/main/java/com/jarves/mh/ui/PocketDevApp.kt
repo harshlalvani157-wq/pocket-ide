@@ -224,6 +224,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.ViewCompat
 import com.jarves.mh.model.ActivityItem
 import com.jarves.mh.model.AgentKind
 import com.jarves.mh.model.ChangeItem
@@ -4495,10 +4496,11 @@ private fun WorkspaceScreen(
     val context = LocalContext.current
     val isAndroidProject = state.androidProjectDetected
     val density = LocalDensity.current
+    val rootInsets = ViewCompat.getRootWindowInsets(windowView)
     val cameraSafeTop = with(density) {
         maxOf(
-            WindowInsets.displayCutout.getTop(density),
-            WindowInsets.statusBars.getTop(density),
+            rootInsets?.getInsets(WindowInsetsCompat.Type.displayCutout())?.top ?: 0,
+            rootInsets?.getInsets(WindowInsetsCompat.Type.statusBars())?.top ?: 0,
         ).toDp()
     }
     val keyboardVisible = WindowInsets.ime.getBottom(density) > 0
