@@ -7931,7 +7931,6 @@ private fun BoxScope.CodeServerFloatingBall(
                     .clickable { onExpandedChange(true) }
                     .pointerInput(Unit) {
                         detectDragGestures { change, dragAmount ->
-                            change.consumePositionChange()
                             onDrag(
                                 dragAmount.x / density.density,
                                 dragAmount.y / density.density,
