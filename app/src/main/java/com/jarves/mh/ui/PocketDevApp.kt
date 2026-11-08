@@ -4474,17 +4474,13 @@ private fun WorkspaceScreen(
     var floatingOffsetY by rememberSaveable { mutableFloatStateOf(0f) }
     val codeServerScale = state.codeServerUiScale
     val windowView = LocalView.current
-    DisposableEffect(editorFullscreen) {
+    DisposableEffect(windowView) {
         val window = (windowView.context as? Activity)?.window
         val controller = window?.let { WindowCompat.getInsetsController(it, windowView) }
         if (window != null && controller != null) {
-            WindowCompat.setDecorFitsSystemWindows(window, !editorFullscreen)
-            if (editorFullscreen) {
-                controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                controller.hide(WindowInsetsCompat.Type.systemBars())
-            } else {
-                controller.show(WindowInsetsCompat.Type.systemBars())
-            }
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.systemBars())
         }
         onDispose {
             if (window != null && controller != null) {
@@ -4896,10 +4892,25 @@ private fun WorkspaceScreen(
                     onToggleFullscreen = { editorFullscreen = !editorFullscreen },
                     uiScale = codeServerScale,
                     onUiScaleChange = onCodeServerScaleChange,
+                    floatingExpanded = floatingExpanded,
+                    floatingOffsetX = floatingOffsetX,
+                    floatingOffsetY = floatingOffsetY,
+                    onFloatingDrag = { dx, dy ->
+                        floatingOffsetX = (floatingOffsetX + dx).coerceIn(-320f, 0f)
+                        floatingOffsetY = (floatingOffsetY + dy).coerceIn(-1400f, 0f)
+                    },
+                    onFloatingExpandedChange = { floatingExpanded = it },
+                    onNavigate = { tab ->
+                        editorFullscreen = tab == WorkspaceTab.EDITOR && state.codeServerRunning
+                        selectedTab = tab
+                        if (tab == WorkspaceTab.FILES) onRefreshFiles()
+                        if (tab == WorkspaceTab.TERMINAL) onTerminalOpened()
+                    },
+                    onOpenSettings = { showDisplaySettings = true },
                 )
                 WorkspaceTab.PREVIEW -> PreviewTab(state.previewReady, state.previewUrl)
             }
-            CodeServerFloatingBall(
+            if (selectedTab != WorkspaceTab.EDITOR || !state.codeServerRunning) CodeServerFloatingBall(
                 expanded = floatingExpanded,
                 offsetX = floatingOffsetX,
                 offsetY = floatingOffsetY,
@@ -7509,6 +7520,13 @@ private fun CodeServerTab(
     onToggleFullscreen: () -> Unit,
     uiScale: Float,
     onUiScaleChange: (Float) -> Unit,
+    floatingExpanded: Boolean,
+    floatingOffsetX: Float,
+    floatingOffsetY: Float,
+    onFloatingDrag: (Float, Float) -> Unit,
+    onFloatingExpandedChange: (Boolean) -> Unit,
+    onNavigate: (WorkspaceTab) -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     key(projectKey) {
     val context = LocalContext.current
@@ -7858,6 +7876,16 @@ private fun CodeServerTab(
                     },
                     modifier = Modifier.fillMaxSize(),
                 )
+                CodeServerFloatingBall(
+                    expanded = floatingExpanded,
+                    offsetX = floatingOffsetX,
+                    offsetY = floatingOffsetY,
+                    onDrag = onFloatingDrag,
+                    onExpandedChange = onFloatingExpandedChange,
+                    onNavigate = onNavigate,
+                    onOpenSettings = onOpenSettings,
+                    onToggleFullscreen = onToggleFullscreen,
+                )
                 }
             }
         }
@@ -7930,7 +7958,7 @@ private fun BoxScope.CodeServerFloatingBall(
                     .size(34.dp)
                     .clickable { onExpandedChange(true) }
                     .pointerInput(Unit) {
-                        detectDragGestures { change, dragAmount ->
+                        detectDragGestures { _, dragAmount ->
                             onDrag(
                                 dragAmount.x / density.density,
                                 dragAmount.y / density.density,
