@@ -1,6 +1,6 @@
 <div align="center">
 
-  <img src="assets/readme/logo.svg" alt="Pocket IDE Logo" width="104" height="104" style="border-radius: 24px;" />
+  <img src="assets/readme/logo.png" alt="Pocket IDE Logo" width="104" height="104" style="border-radius: 24px;" />
 
   # Pocket IDE
 
