@@ -4494,7 +4494,14 @@ private fun WorkspaceScreen(
     }
     val context = LocalContext.current
     val isAndroidProject = state.androidProjectDetected
-    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val density = LocalDensity.current
+    val cameraSafeTop = with(density) {
+        maxOf(
+            WindowInsets.displayCutout.getTop(density),
+            WindowInsets.statusBars.getTop(density),
+        ).toDp()
+    }
+    val keyboardVisible = WindowInsets.ime.getBottom(density) > 0
     var pendingAndroidAction by remember { mutableStateOf<AndroidAction?>(null) }
     var exportSelection by remember(state.activeProject?.id) { mutableStateOf(ExportSelection()) }
     var exportSelectionMode by remember(state.activeProject?.id) { mutableStateOf(false) }
@@ -4697,6 +4704,7 @@ private fun WorkspaceScreen(
         )
     }
     Scaffold(
+        modifier = Modifier.padding(top = cameraSafeTop),
         topBar = {
             if (!editorFullscreen) TopAppBar(
                 title = {
