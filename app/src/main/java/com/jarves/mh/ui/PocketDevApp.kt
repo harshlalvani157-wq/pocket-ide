@@ -206,7 +206,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.input.pointer.consume
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -7932,7 +7931,7 @@ private fun BoxScope.CodeServerFloatingBall(
                     .clickable { onExpandedChange(true) }
                     .pointerInput(Unit) {
                         detectDragGestures { change, dragAmount ->
-                            change.consume()
+                            change.consumePositionChange()
                             onDrag(
                                 dragAmount.x / density.density,
                                 dragAmount.y / density.density,
