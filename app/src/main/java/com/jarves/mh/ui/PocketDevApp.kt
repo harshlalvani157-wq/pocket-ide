@@ -4706,7 +4706,10 @@ private fun WorkspaceScreen(
         )
     }
     Scaffold(
-        modifier = Modifier.padding(top = cameraSafeTop),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(top = cameraSafeTop),
         topBar = {
             if (!editorFullscreen) TopAppBar(
                 title = {
