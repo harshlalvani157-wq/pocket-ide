@@ -492,3 +492,22 @@ but I want the terminal like the stomach only with the extra keys laying down at
 
 
 16 ) to add git clint like the Android code studio app has 
+
+
+17 ) to make app like antigem it's fucking good app ide for Android so just like that app my app will also have the ADB so ai gents can automated task but risky and 
+
+18 ) Android devlopment environment install which will give more perfect power for ai agents to build instead of thinking for ai that what does app has and what gradle etc need just install the  Android dev environment and done 
+
+19 ) native rea environment installtion support and using tips 
+
+20) / slash command typing gives the pluging option in the chabox 
+
+21 ) improve ui ux like curve and theme apperance combo set for user 
+
+22 ) a major chage in ui to make look good 
+
+23 ) a tool like wisperflow native integrated so user can type by spaeak 
+
+24) search bar in projects 
+
+25 ) coding agents can make child agents for more taks capability if possible 
